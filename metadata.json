@@ -1,0 +1,6 @@
+{
+  "name": "Text to Speech",
+  "description": "Convert text into high-quality, realistic speech using Gemini AI voice synthesis.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

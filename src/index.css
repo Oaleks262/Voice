@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --animate-wave: wave 1.1s ease-in-out infinite;
+
+  @keyframes wave {
+    0%, 100% {
+      transform: scaleY(0.15);
+    }
+    50% {
+      transform: scaleY(1.0);
+    }
+  }
+}
+
+.animate-wave {
+  transform-origin: bottom;
+}
