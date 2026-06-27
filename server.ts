@@ -13,11 +13,23 @@ app.use(express.json({ limit: "15mb" }));
 
 // Lazy initialisation of Gemini client to prevent startup crash if API key is missing
 let aiClient: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
+function getGeminiClient(customApiKey?: string): GoogleGenAI {
+  const apiKey = customApiKey || process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not defined. Please check your Secrets in Settings.");
+    throw new Error("GEMINI_API_KEY is not defined. Please add your own API Key in the settings panel at the top, or contact the site administrator.");
   }
+  
+  if (customApiKey) {
+    return new GoogleGenAI({
+      apiKey: customApiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build-custom",
+        },
+      },
+    });
+  }
+
   if (!aiClient) {
     aiClient = new GoogleGenAI({
       apiKey,
@@ -42,6 +54,7 @@ app.get("/api/config", (req, res) => {
 app.post("/api/tts", async (req, res) => {
   try {
     const { text, voice, style, speed } = req.body;
+    const customApiKey = req.headers["x-gemini-api-key"] as string | undefined;
     
     if (!text || typeof text !== "string") {
       return res.status(400).json({ error: "Будь ласка, введіть текст для озвучення." });
@@ -51,7 +64,7 @@ app.post("/api/tts", async (req, res) => {
       return res.status(400).json({ error: "Текст занадто довгий (максимум 5000 символів)." });
     }
 
-    const ai = getGeminiClient();
+    const ai = getGeminiClient(customApiKey);
 
     // Map emotion styles
     let styleInstruction = "Say";

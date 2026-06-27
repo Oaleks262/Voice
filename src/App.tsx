@@ -8,12 +8,14 @@ import Workspace from "./components/Workspace";
 import VoicePanel from "./components/VoicePanel";
 import AudioPlayer from "./components/AudioPlayer";
 import HistoryList from "./components/HistoryList";
+import ApiKeyManager from "./components/ApiKeyManager";
 
 export default function App() {
   const [text, setText] = useState("");
   const [selectedVoice, setSelectedVoice] = useState<VoiceName>("Zephyr");
   const [selectedStyle, setSelectedStyle] = useState<EmotionStyle>("neutral");
   const [selectedSpeed, setSelectedSpeed] = useState<SpeechSpeed>("normal");
+  const [customApiKey, setCustomApiKey] = useState("");
   
   const [audioBase64, setAudioBase64] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
@@ -35,6 +37,16 @@ export default function App() {
         console.error("Failed to check server API key config:", err);
         setHasApiKey(false);
       });
+
+    // Load custom API key from localStorage
+    try {
+      const savedKey = localStorage.getItem("custom_gemini_api_key");
+      if (savedKey) {
+        setCustomApiKey(savedKey);
+      }
+    } catch (e) {
+      console.error("Failed to load custom API key:", e);
+    }
 
     // Load local history
     try {
@@ -64,9 +76,14 @@ export default function App() {
     setErrorMsg(null);
 
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (customApiKey) {
+        headers["X-Gemini-API-Key"] = customApiKey;
+      }
+
       const res = await fetch("/api/tts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           text: voice.previewText,
           voice: voice.id,
@@ -119,9 +136,14 @@ export default function App() {
     setSuccessMsg(null);
 
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (customApiKey) {
+        headers["X-Gemini-API-Key"] = customApiKey;
+      }
+
       const res = await fetch("/api/tts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           text: text,
           voice: selectedVoice,
@@ -206,21 +228,20 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans antialiased text-slate-900 selection:bg-indigo-100 selection:text-indigo-900">
-      <Header hasApiKey={hasApiKey} />
+      <Header hasApiKey={hasApiKey || !!customApiKey} />
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
         
         {/* API Key Missing Alert */}
-        {hasApiKey === false && (
+        {hasApiKey === false && !customApiKey && (
           <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-4 flex gap-3 text-amber-800 shadow-sm animate-fade-in">
             <CircleAlert className="h-5 w-5 shrink-0 text-amber-600 mt-0.5" />
             <div className="text-xs sm:text-sm">
               <strong className="font-semibold block text-amber-900 mb-0.5">Відсутній API-ключ Gemini</strong>
               <span>
-                Ваша інсталяція не виявила ключ <code className="bg-amber-100 px-1 py-0.5 rounded text-amber-950 font-mono">GEMINI_API_KEY</code>. 
-                Будь ласка, відкрийте меню <strong>Settings &gt; Secrets</strong> у верхній панелі інструментів AI Studio та додайте свій 
-                ключ, щоб розпочати озвучення.
+                Ваша інсталяція не виявила системний ключ <code className="bg-amber-100 px-1 py-0.5 rounded text-amber-950 font-mono">GEMINI_API_KEY</code>. 
+                Будь ласка, введіть свій власний API-ключ у налаштуваннях праворуч, щоб розпочати озвучення.
               </span>
             </div>
           </div>
@@ -320,7 +341,24 @@ export default function App() {
           </div>
 
           {/* Right Column (4 cols): Voice customization panel */}
-          <div className="lg:col-span-4">
+          <div className="lg:col-span-4 space-y-6">
+            <ApiKeyManager
+              customApiKey={customApiKey}
+              onApiKeyChange={(newKey) => {
+                setCustomApiKey(newKey);
+                try {
+                  if (newKey) {
+                    localStorage.setItem("custom_gemini_api_key", newKey);
+                  } else {
+                    localStorage.removeItem("custom_gemini_api_key");
+                  }
+                } catch (e) {
+                  console.error("Failed to persist custom API key:", e);
+                }
+              }}
+              hasSystemApiKey={hasApiKey}
+            />
+
             <VoicePanel
               selectedVoice={selectedVoice}
               setSelectedVoice={setSelectedVoice}
