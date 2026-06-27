@@ -62,6 +62,7 @@ app.post("/api/tts", async (req, res) => {
     else if (style === "dramatic") styleInstruction += " dramatically";
     else if (style === "serious") styleInstruction += " seriously and professionally";
     else if (style === "calm") styleInstruction += " calmly and softly";
+    else if (style === "soothing") styleInstruction += " in a very soothing, warm, slow and deeply relaxed voice like a mindfulness meditation guide";
     else styleInstruction += " clearly";
 
     // Map speed configurations

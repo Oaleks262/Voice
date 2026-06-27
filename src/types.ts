@@ -8,7 +8,8 @@ export type EmotionStyle =
   | "whispering"
   | "dramatic"
   | "serious"
-  | "calm";
+  | "calm"
+  | "soothing";
 
 export type SpeechSpeed = "slow" | "normal" | "fast";
 
