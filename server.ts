@@ -142,29 +142,64 @@ app.post("/api/tts", async (req, res) => {
 
     console.log(`Generating speech segments via gemini-3.1-flash-tts-preview: voice=${voiceName}, segmentsCount=${textSegments.length}`);
 
-    const audioPromises = textSegments.map(async (seg) => {
+    // Helper function with exponential backoff for rate limits (429)
+    const generateWithRetry = async (seg: { content: string }, attempt = 1): Promise<Buffer> => {
+      const maxAttempts = 6;
       const promptText = `${styleInstruction}: ${seg.content}`;
-      const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-tts-preview",
-        contents: [{ parts: [{ text: promptText }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName },
+      try {
+        const response = await ai.models.generateContent({
+          model: "gemini-3.1-flash-tts-preview",
+          contents: [{ parts: [{ text: promptText }] }],
+          config: {
+            responseModalities: [Modality.AUDIO],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName },
+              },
             },
           },
-        },
-      });
+        });
 
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (!base64Audio) {
-        throw new Error(`ШІ не повернув звукові дані для фрагменту: "${seg.content.substring(0, 30)}..."`);
+        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (!base64Audio) {
+          throw new Error(`ШІ не повернув звукові дані для фрагменту: "${seg.content.substring(0, 30)}..."`);
+        }
+        return Buffer.from(base64Audio, "base64");
+      } catch (error: any) {
+        const errorStr = typeof error === "object" ? JSON.stringify(error) : String(error);
+        const isQuota = 
+          errorStr.includes("RESOURCE_EXHAUSTED") || 
+          errorStr.includes("Quota exceeded") || 
+          errorStr.includes("429") || 
+          error?.status === 429 ||
+          error?.status === "RESOURCE_EXHAUSTED";
+
+        if (isQuota && attempt < maxAttempts) {
+          // In Tier 1 or free tier, we have a 10 RPM (requests per minute) limit.
+          // Wait longer on successive retries: 6s, 12s, 18s, 24s...
+          const delayMs = attempt * 6000;
+          console.warn(`[Попередження] Досягнуто ліміту запитів (429). Спроба ${attempt}/${maxAttempts}. Очікуємо ${delayMs / 1000} сек...`);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          return generateWithRetry(seg, attempt + 1);
+        }
+        throw error;
       }
-      return Buffer.from(base64Audio, "base64");
-    });
+    };
 
-    const audioBuffers = await Promise.all(audioPromises);
+    // Execute sequentially with a small delay between requests to avoid slamming the API
+    const audioBuffers: Buffer[] = [];
+    for (let i = 0; i < textSegments.length; i++) {
+      const seg = textSegments[i];
+      console.log(`Processing segment ${i + 1}/${textSegments.length}: "${seg.content.substring(0, 30)}..."`);
+      
+      if (i > 0) {
+        // Add a small delay between requests to remain under limits
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      
+      const buffer = await generateWithRetry(seg);
+      audioBuffers.push(buffer);
+    }
 
     // If there is only one text segment and NO pauses, return it directly
     const pauseSegments = segments.filter((s) => s.type === "pause");
@@ -222,7 +257,25 @@ app.post("/api/tts", async (req, res) => {
     res.json({ audio: finalWav.toString("base64") });
   } catch (error: any) {
     console.error("Помилка генерації TTS:", error);
-    res.status(500).json({ error: error?.message || "Помилка при озвученні тексту" });
+    
+    let errMsg = error?.message || "Помилка при озвученні тексту";
+    
+    // Check for quota or rate limit errors
+    const errorStr = typeof error === 'object' ? JSON.stringify(error) : String(error);
+    const isQuotaError = 
+      errMsg.includes("RESOURCE_EXHAUSTED") || 
+      errMsg.includes("Quota exceeded") || 
+      errMsg.includes("429") ||
+      errorStr.includes("RESOURCE_EXHAUSTED") ||
+      errorStr.includes("Quota exceeded") ||
+      error?.status === 429 ||
+      error?.status === "RESOURCE_EXHAUSTED";
+
+    if (isQuotaError) {
+      errMsg = "Перевищено ліміт запитів до Gemini API (429 Resource Exhausted). Безкоштовний тариф дозволяє лише 10 запитів на хвилину. Оскільки ваші позначки пауз розбивають текст на окремі фрагменти, кожен такий фрагмент надсилається як окремий запит. Будь ласка, зачекайте 30 секунд або підключіть платний тариф (Pay-as-you-go) для вашого API-ключа.";
+    }
+    
+    res.status(500).json({ error: errMsg });
   }
 });
 
