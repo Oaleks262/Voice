@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, MouseEvent, ChangeEvent } from "react";
 import { Play, Pause, Download, Volume2, VolumeX, RotateCcw, AudioLines, Gauge } from "lucide-react";
+import { base64ToBlobUrl } from "../utils/audio";
 
 interface AudioPlayerProps {
   audioBase64: string;
@@ -31,13 +32,8 @@ export default function AudioPlayer({
   useEffect(() => {
     if (!audioBase64) return;
     
-    const binary = atob(audioBase64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    const blob = new Blob([bytes], { type: "audio/wav" });
-    const url = URL.createObjectURL(blob);
+    const url = base64ToBlobUrl(audioBase64, "audio/wav");
+    if (!url) return;
     
     setAudioUrl(url);
     setIsPlaying(false);

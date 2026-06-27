@@ -2,6 +2,7 @@ import { useState } from "react";
 import { History, Trash2, Calendar, Play, Download, Search, Sparkles, ArrowUpRight } from "lucide-react";
 import { TtsHistoryItem } from "../types";
 import { EMOTIONS, VOICES } from "../data";
+import { base64ToBlobUrl } from "../utils/audio";
 
 interface HistoryListProps {
   history: TtsHistoryItem[];
@@ -43,13 +44,8 @@ export default function HistoryList({
   };
 
   const handleDownload = (item: TtsHistoryItem) => {
-    const binary = atob(item.audioBase64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    const blob = new Blob([bytes], { type: "audio/wav" });
-    const url = URL.createObjectURL(blob);
+    const url = base64ToBlobUrl(item.audioBase64, "audio/wav");
+    if (!url) return;
     
     const link = document.createElement("a");
     link.href = url;

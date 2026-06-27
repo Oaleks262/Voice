@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { Sparkles, AlertCircle, Headphones, Loader2, Play, CircleAlert, CheckCircle } from "lucide-react";
 import { VoiceConfig, VoiceName, EmotionStyle, SpeechSpeed, TtsHistoryItem } from "./types";
 import { VOICES, EMOTIONS } from "./data";
+import { base64ToBlobUrl } from "./utils/audio";
 import Header from "./components/Header";
 import Workspace from "./components/Workspace";
 import VoicePanel from "./components/VoicePanel";
@@ -99,13 +100,10 @@ export default function App() {
 
       if (data.audio) {
         // Decode base64 to play back immediately
-        const binary = atob(data.audio);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i);
+        const url = base64ToBlobUrl(data.audio, "audio/wav");
+        if (!url) {
+          throw new Error("Не вдалося декодувати аудіо для відтворення");
         }
-        const blob = new Blob([bytes], { type: "audio/wav" });
-        const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         
         audio.play().catch(err => console.error("Preview playback failed:", err));

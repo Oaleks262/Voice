@@ -43,6 +43,117 @@ function getGeminiClient(customApiKey?: string): GoogleGenAI {
   return aiClient;
 }
 
+function parseWav(buffer: Buffer) {
+  let offset = 12;
+  let numChannels = 1;
+  let sampleRate = 24000;
+  let bitsPerSample = 16;
+  let byteRate = 48000;
+  let blockAlign = 2;
+  let dataSubarray: Buffer | null = null;
+
+  try {
+    console.log(`[parseWav] Parsing buffer of size ${buffer.length} bytes`);
+    if (buffer.length >= 44) {
+      const riffHeader = buffer.toString("ascii", 0, 4);
+      const waveHeader = buffer.toString("ascii", 8, 12);
+      console.log(`[parseWav] RIFF header: "${riffHeader}", WAVE header: "${waveHeader}"`);
+      
+      // If it doesn't have a valid RIFF/WAVE header, treat it as raw PCM directly
+      if (riffHeader !== "RIFF" || waveHeader !== "WAVE") {
+        console.log("[parseWav] No RIFF/WAVE header found. Treating entire buffer as raw PCM 24kHz Mono 16-bit");
+        return {
+          numChannels: 1,
+          sampleRate: 24000,
+          bitsPerSample: 16,
+          byteRate: 48000,
+          blockAlign: 2,
+          data: buffer,
+        };
+      }
+    } else {
+      console.log("[parseWav] Buffer too short for WAV header. Treating entire buffer as raw PCM 24kHz Mono 16-bit");
+      return {
+        numChannels: 1,
+        sampleRate: 24000,
+        bitsPerSample: 16,
+        byteRate: 48000,
+        blockAlign: 2,
+        data: buffer,
+      };
+    }
+
+    while (offset + 8 <= buffer.length) {
+      const chunkId = buffer.toString("ascii", offset, offset + 4);
+      const chunkSize = buffer.readUInt32LE(offset + 4);
+      
+      console.log(`[parseWav] Found chunk "${chunkId}" of size ${chunkSize} at offset ${offset}`);
+
+      if (chunkSize < 0 || offset + 8 + chunkSize > buffer.length) {
+        console.log(`[parseWav] Chunk size out of bounds or invalid: ${chunkSize}`);
+        break;
+      }
+
+      if (chunkId === "fmt ") {
+        numChannels = buffer.readUInt16LE(offset + 10);
+        sampleRate = buffer.readUInt32LE(offset + 12);
+        byteRate = buffer.readUInt32LE(offset + 16);
+        blockAlign = buffer.readUInt16LE(offset + 20);
+        bitsPerSample = buffer.readUInt16LE(offset + 22);
+        console.log(`[parseWav] Parsed fmt: channels=${numChannels}, rate=${sampleRate}, bits=${bitsPerSample}`);
+      } else if (chunkId === "data") {
+        const dataStart = offset + 8;
+        dataSubarray = buffer.subarray(dataStart, dataStart + chunkSize);
+        console.log(`[parseWav] Parsed data: offset=${dataStart}, size=${chunkSize}, actual length=${dataSubarray.length}`);
+      }
+      
+      offset += 8 + chunkSize;
+      if (chunkSize % 2 !== 0) {
+        offset += 1;
+      }
+    }
+  } catch (err) {
+    console.error("[parseWav] Error parsing WAV buffer:", err);
+  }
+
+  // Apply fallback values if parsing returned invalid/zero properties
+  if (!numChannels || numChannels < 1) {
+    numChannels = 1;
+  }
+  if (!sampleRate || sampleRate < 8000) {
+    sampleRate = 24000;
+  }
+  if (!bitsPerSample || bitsPerSample < 8) {
+    bitsPerSample = 16;
+  }
+  if (!byteRate || byteRate < 8000) {
+    byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+  }
+  if (!blockAlign || blockAlign < 1) {
+    blockAlign = numChannels * (bitsPerSample / 8);
+  }
+
+  // Fallback for PCM data retrieval
+  if (!dataSubarray || dataSubarray.length === 0) {
+    if (buffer.length > 44) {
+      dataSubarray = buffer.subarray(44);
+      console.log(`[parseWav] Fallback: sliced buffer at standard offset 44 (length=${dataSubarray.length} bytes)`);
+    } else {
+      dataSubarray = Buffer.alloc(0);
+      console.log(`[parseWav] Fallback: empty PCM buffer`);
+    }
+  }
+
+  return {
+    numChannels,
+    sampleRate,
+    bitsPerSample,
+    byteRate,
+    blockAlign,
+    data: dataSubarray,
+  };
+}
+
 // API Config check
 app.get("/api/config", (req, res) => {
   res.json({
@@ -201,32 +312,27 @@ app.post("/api/tts", async (req, res) => {
       audioBuffers.push(buffer);
     }
 
-    // If there is only one text segment and NO pauses, return it directly
-    const pauseSegments = segments.filter((s) => s.type === "pause");
-    if (pauseSegments.length === 0 && audioBuffers.length === 1) {
-      return res.json({ audio: audioBuffers[0].toString("base64") });
-    }
+    // Parse all generated WAV buffers dynamically to extract exact parameters and PCM data
+    const parsedWavs = audioBuffers.map((buf, idx) => {
+      const parsed = parseWav(buf);
+      if (!parsed.data) {
+        throw new Error(`Не вдалося отримати PCM дані з аудіо фрагменту ${idx + 1}`);
+      }
+      return parsed;
+    });
 
-    const firstWav = audioBuffers[0];
-    if (!firstWav || firstWav.length < 44) {
-      throw new Error("Некоректний формат аудіо від ШІ");
-    }
-
-    // Read WAV parameters from header dynamically
-    const numChannels = firstWav.readUInt16LE(22);
-    const sampleRate = firstWav.readUInt32LE(24);
-    const bitsPerSample = firstWav.readUInt16LE(34);
-    const byteRate = firstWav.readUInt32LE(28);
-    const blockAlign = firstWav.readUInt16LE(32);
+    const firstWavParams = parsedWavs[0];
+    const { numChannels, sampleRate, bitsPerSample, byteRate, blockAlign } = firstWavParams;
 
     const pcmParts: Buffer[] = [];
     let textSegIndex = 0;
 
     for (const seg of segments) {
       if (seg.type === "text") {
-        const wavBuffer = audioBuffers[textSegIndex++];
-        const pcmData = wavBuffer.subarray(44);
-        pcmParts.push(pcmData);
+        const parsed = parsedWavs[textSegIndex++];
+        if (parsed && parsed.data) {
+          pcmParts.push(parsed.data);
+        }
       } else if (seg.type === "pause") {
         const durationSeconds = seg.duration || 1;
         const silenceBytesCount = byteRate * durationSeconds;
