@@ -93,25 +93,34 @@ function generateSilence(seconds: number): Buffer {
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 async function generateSpeechPcm(ai: GoogleGenAI, text: string, voice: string, styleInstruction: string): Promise<Buffer> {
-  const maxRetries = 3;
+  const maxRetries = 5;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-tts-preview",
-      contents: [{ parts: [{ text: `${styleInstruction}: ${text}` }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } },
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-flash-tts-preview",
+        contents: [{ parts: [{ text: `${styleInstruction}: ${text}` }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } },
+          },
         },
-      },
-    });
-    const candidates = (response as any).candidates;
-    const part = candidates?.[0]?.content?.parts?.[0];
-    const b64: string | undefined = part?.inlineData?.data;
-    const finishReason = candidates?.[0]?.finishReason;
-    console.log(`  [${attempt}/${maxRetries}] "${text.substring(0,30)}" finish=${finishReason} hasData=${!!b64}`);
-    if (b64) return Buffer.from(b64, "base64");
-    if (attempt < maxRetries) await sleep(1500 * attempt);
+      });
+      const candidates = (response as any).candidates;
+      const part = candidates?.[0]?.content?.parts?.[0];
+      const b64: string | undefined = part?.inlineData?.data;
+      const finishReason = candidates?.[0]?.finishReason;
+      console.log(`  [${attempt}/${maxRetries}] "${text.substring(0,30)}" finish=${finishReason} hasData=${!!b64}`);
+      if (b64) return Buffer.from(b64, "base64");
+      if (attempt < maxRetries) await sleep(3000 * attempt);
+    } catch (err: any) {
+      const msg = err?.message || "";
+      const retryMatch = msg.match(/"retryDelay":"(\d+)s"/);
+      const waitSec = retryMatch ? parseInt(retryMatch[1]) + 5 : 35;
+      console.log(`  [${attempt}/${maxRetries}] 429 rate limit — чекаємо ${waitSec}s...`);
+      if (attempt < maxRetries) await sleep(waitSec * 1000);
+      else throw err;
+    }
   }
   throw new Error(`Не вдалось отримати аудіо після ${maxRetries} спроб: ${text.substring(0, 40)}`);
 }
@@ -152,7 +161,7 @@ app.post("/api/tts", async (req, res) => {
         if (seg.type === "pause") {
           pcmChunks.push(generateSilence(seg.seconds));
         } else {
-          if (i > 0) await sleep(500);
+          if (i > 0) await sleep(6500);
           const pcm = await generateSpeechPcm(ai, seg.content, voiceName, styleInstruction);
           pcmChunks.push(pcm);
         }
