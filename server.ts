@@ -112,7 +112,7 @@ async function generateSpeechPcm(ai: GoogleGenAI, text: string, voice: string, s
       const finishReason = candidates?.[0]?.finishReason;
       console.log(`  [${attempt}/${maxRetries}] "${text.substring(0,30)}" finish=${finishReason} hasData=${!!b64}`);
       if (b64) return Buffer.from(b64, "base64");
-      if (attempt < maxRetries) await sleep(3000 * attempt);
+      if (attempt < maxRetries) await sleep(8000 * attempt);
     } catch (err: any) {
       const msg = err?.message || "";
       const retryMatch = msg.match(/"retryDelay":"(\d+)s"/);
